@@ -2,7 +2,6 @@
 
 open FSharp.Data
 
-
 let [<Literal>] url = """https://reservations.cubilis.eu/1487/Rooms/Select?Arrival=2018-11-16&Departure=2018-11-17"""
 
 
@@ -11,7 +10,7 @@ open System.Net
 #r "System.Net"
 
 let filePath = __SOURCE_DIRECTORY__ + "/cubilis.html"
-let sample = File.ReadAllText(filePath) |> WebUtility.HtmlDecode
+let sample = File.ReadAllText(filePath) |> fun x -> x.Contains("<table ")
 
 let directValue (x:HtmlNode) = x.DirectInnerText()
 let cssSelect selector (x:HtmlNode) = x.CssSelect(selector)
@@ -41,5 +40,5 @@ doc.CssSelect("div.bookingitem")
     roomName, prices)
 
 let rooms = doc.CssSelect("div.bookingitem")
-let roomNames = rooms |> List.map roomName
+let roomNames = rooms |> List.map roomNamei
 let standardRoom = rooms.[1]
