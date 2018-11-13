@@ -1,5 +1,3 @@
-#r "packages/FSharp.Data/lib/net45/FSharp.Data.dll"
-
 open System
 open System.Text.RegularExpressions
 open System.Globalization
@@ -141,7 +139,21 @@ let pWord word =
         else None
     |> Parser
 
+run (pWord "hello") "Hello"
+
 //Business Part
+
+iso3codes |> List.tryFind (fun x -> x = Iso3Code "AED")
+
+    
+type PriceKind = 
+    | VatIncluded of Tax list
+    | VatNotIncluded of Tax list
+
+let t = VatIncluded []
+
+let vatSample = "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
+
 let vatPercent = 
     fun input ->
         match input with
@@ -149,8 +161,6 @@ let vatPercent =
             Some ({ Label=label; Amount = Percent tax}, tail)
         | _ -> None
     |> Parser
-
-iso3codes |> List.tryFind (fun x -> x = Iso3Code "AED")
 
 let vatAmount = 
     fun input ->
@@ -169,22 +179,15 @@ let vatAmount =
                 | _ -> None
             else None) 
     |> Parser
-    
-let vat = (vatPercent <|> vatAmount) 
-let vats = many vat
 
-type PriceKind = 
-    | VatIncluded of Tax list
-    | VatNotIncluded of Tax list
-
-let vatSample = "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
 
 let pNotIncluded = pWord "not included" |> map (fun _ -> VatNotIncluded) 
-let pIncluded = (fun _ -> VatNotIncluded) <!> pWord "included" 
-
+let pIncluded =    pWord "included"     |> map (fun _ -> VatIncluded)
 let pPriceKind = pNotIncluded <|> pIncluded
-
+let vat = (vatPercent <|> vatAmount) 
+let vats = many vat
 let pPrice = pPriceKind <*> vats
+
 
 
 run vats vatSample
@@ -193,5 +196,6 @@ run pPriceKind vatSample
     
 run vats vatSample
 
-run pPrice vatSample
+run pPrice "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
+run pPrice "Prices are per room. included: 5 % VAT"
 
