@@ -1,3 +1,5 @@
+//docker run --rm -it --hostname fs --name fs -v C:/gh/fsharp-scrapping:/home/src/test fsharp:netcore
+
 #r "packages/FSharp.Data/lib/net45/FSharp.Data.dll"
 
 open FSharp.Data
