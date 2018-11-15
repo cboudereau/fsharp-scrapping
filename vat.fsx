@@ -25,27 +25,102 @@ module Pattern =
         if m.Success then Some(List.tail [ for g in m.Groups -> g.Value ])
         else None
 
-    let (|Percent|_|) x =
-        match x with
-        | Regex """([0-9]*)\s*%""" [Int percent] -> Some percent 
-        | Regex """%\s*([0-9]*)""" [Int percent] -> Some percent 
-        | _ -> None
-
     let (|Decimal|_|) x =
         match Decimal.TryParse x with
         | true, x' -> Some x'
         | _ -> None
 
-    let (|Iso3Code|_|) input = 
-        let candidate = (input:string).ToUpper() |> Currency.Iso3Code
-        iso3codes |> List.tryFind ((=) candidate) 
-
 let icontains search source = (source:string).IndexOf(search, StringComparison.InvariantCultureIgnoreCase) <> -1
 
 let (|Contains|_|) search source = if icontains search source then Some () else None
 
-let [<Literal>] url = "https://www.booking.com/hotel/ae/rixos-premium-dubai.en-gb.html?label=gen173nr-1FCAEoggI46AdIM1gEaEaIAQGYAQm4AQfIAQzYAQHoAQH4AQuIAgGoAgM;sid=e115f619a16b958357917296376f211b;all_sr_blocks=226213519_99074851_2_2_0;checkin=2018-11-18;checkout=2018-11-19;dest_id=-782831;dest_type=city;dist=0;hapos=12;highlighted_blocks=226213519_99074851_2_2_0;hpos=12;room1=A%2CA;sb_price_type=total;srepoch=1542023996;srpvid=0f3e545e0afa008c;type=total;ucfs=1&#hotelTmpl"
+let (|RgxTail|_|) pattern input =
+    let m = Regex.Match(input, pattern, RegexOptions.Compiled ||| RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
+    if m.Success then 
+        let allgroups = [ for g in m.Groups -> g ]
+        let length = 
+            let head = (List.head allgroups)
+            head.Index + head.Length
+        
+        let result = List.tail allgroups |> List.map (fun g -> g.Value)
+        if input.Length = length then struct ("", result) |> Some
+        else 
+            let remaining = input.Substring(length)
+            struct (remaining, result) |> Some
+    else None
 
+type Parser<'a> = Parser of (string -> (struct ('a * string)) option)
+
+let (<||>) (Parser f) (Parser g) = 
+    fun input ->
+        let x = f input
+        let y = g input
+        Option.map2 (fun struct (x',t1) struct (y',t2) -> 
+            ) x y
+        |> Option.orElse x
+        |> Option.orElse y
+    |> Parser
+
+let (<|>) (Parser f) (Parser g) =
+    fun input ->
+        let x = f input
+        let y = g input
+
+        Option.map2 (fun struct (x',t1) struct (y',t2) -> if (t1:string).Length > (t2:string).Length then struct (x', t1) else struct (y', t2)) x y
+        |> Option.orElse x
+        |> Option.orElse y
+        
+    |> Parser
+
+let many (Parser f) =
+    fun input ->
+        let list = 
+            Some input
+            |> List.unfold (
+                Option.bind (
+                    f 
+                    >> Option.map (fun struct (v, state) -> 
+                        printfn "%A" v
+                        printfn "state:%s" state
+                        ((v,state), Some state) )))
+        
+        list 
+        |> List.tryLast
+        |> Option.map (fun (_, state) -> struct (list |> List.map fst, state))
+    |> Parser
+
+let run (Parser p) input = p input
+
+let apply f x = 
+    fun input -> 
+        run f input
+        |> Option.bind (fun struct (f', t1) -> 
+            run x t1
+            |> Option.map (fun struct (x', t2) -> struct (f' x', t2 ) ) )
+    |> Parser
+
+let map f x = 
+    fun input ->
+        run x input
+        |> Option.map (fun struct (v,tail) -> struct (f v, tail) )
+    |> Parser
+
+let (<!>) f x = map f x
+let (<*>) f x = apply f x
+
+let pWord word = 
+    fun input ->
+        let wordIndex = (input:string).IndexOf(word, StringComparison.InvariantCultureIgnoreCase)
+        if wordIndex <> -1 then
+            let wordLength = (word:string).Length
+            let tail = input.Substring(wordIndex + wordLength)
+            Some struct (input.Substring(wordIndex, wordLength), tail)
+        else None
+    |> Parser
+
+run (pWord "hello") "Hello everybody"
+
+//Business Part
 type Money = 
     { Amount:decimal
       Currency: Currency }
@@ -58,136 +133,54 @@ type Tax =
     { Label:string
       Amount: TaxAmount }
 
-type RgxTail = 
-    | EOL
-    | Tail of string
-
-module RgxTail = 
-    let toOption = function EOL -> None | Tail t -> Some t
-
-let (|RgxTail|_|) pattern input =
-    let m = Regex.Match(input, pattern, RegexOptions.Compiled ||| RegexOptions.CultureInvariant ||| RegexOptions.IgnoreCase)
-    if m.Success then 
-        let allgroups = [ for g in m.Groups -> g ]
-        let length = 
-            let head = (List.head allgroups)
-            head.Index + head.Length
-        
-        let result = List.tail allgroups |> List.map (fun g -> g.Value)
-        if input.Length = length then struct (EOL, result) |> Some
-        else 
-            let remaining = input.Substring(length)
-            struct (Tail remaining, result) |> Some
-    else None
-
-type Parser<'a> = Parser of (string -> ('a * RgxTail) option)
-
-let (<|>) (Parser f) (Parser g) =
-    fun input ->
-        match f input with
-        | Some r -> Some r
-        | None -> g input
-    |> Parser
-
-
-let many (Parser f) =
-    fun input ->
-        let r = 
-            Seq.unfold (fun state -> 
-                match state with
-                | EOL -> 
-                    None 
-                | Tail tail -> 
-                    f tail |> Option.map (fun (x,t) -> ((x,t),t))) (Tail input)
-            |> Seq.toList
-        
-        r |> List.tryLast
-        |> Option.map (fun (_,t) -> r |> List.map fst , t)
-    |> Parser
-
-let run (Parser p) input = p input
-
-let apply f x = 
-    fun input -> 
-        run f input
-        |> Option.bind (fun (f', t1) -> 
-            t1 
-            |> RgxTail.toOption
-            |> Option.bind (fun t1' ->
-                run x t1'
-                |> Option.map (fun (x', t2) -> f' x', t2) ) )
-    |> Parser
-
-let map f x = 
-    fun input ->
-        run x input
-        |> Option.map (fun (v,tail) -> f v, tail)
-    |> Parser
-
-let (<!>) f x = map f x
-let (<*>) f x = apply f x
-
-let pWord word = 
-    fun input ->
-        let wordIndex = (input:string).IndexOf(word, StringComparison.InvariantCultureIgnoreCase)
-        if wordIndex <> -1 then
-            let wordLength = (word:string).Length
-            let tail = 
-                if wordIndex + wordLength = input.Length then EOL
-                else input.Substring(wordIndex + wordLength) |> Tail
-            Some (input.Substring(wordIndex, wordLength), tail)
-        else None
-    |> Parser
-
-run (pWord "hello") "Hello"
-
-//Business Part
-
-iso3codes |> List.tryFind (fun x -> x = Iso3Code "AED")
-
-    
 type PriceKind = 
     | VatIncluded of Tax list
     | VatNotIncluded of Tax list
 
-let t = VatIncluded []
-
-let vatSample = "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
-
-let vatPercent = 
+let pVatPercent = 
     fun input ->
         match input with
-        | RgxTail "([0-9]*)\s*%\s*(\w+)" struct (tail, [Pattern.Decimal tax; label]) -> 
-            Some ({ Label=label; Amount = Percent tax}, tail)
+        | RgxTail "(\d+\.?\d*)\s*%\s*([^,]+)" struct (tail, [Pattern.Decimal tax; label]) -> 
+            Some struct ({ Label=label; Amount = Percent tax}, tail)
         | _ -> None
     |> Parser
 
-let vatAmount = 
+run pVatPercent "5 % VAT"
+
+let pVatAmount = 
     fun input ->
         iso3codes 
         |> List.tryPick (fun (Iso3Code isoCode) -> 
             let index = (input:string).IndexOf(isoCode)
             if index <> -1 then
-                match input.Substring(index) with
-                | RgxTail "([0-9]*\.[0-9]*)(\w+)" struct (tail, [Pattern.Decimal amount; label]) -> 
+                match input.Substring(index + isoCode.Length) with
+                | RgxTail "(\d+\.?\d*)\s*([^,]+)" struct (tail, [Pattern.Decimal amount; label]) -> 
                     let taxAmount = 
                         { Amount = amount
                           Currency = Iso3Code isoCode }
                         |> Fixed 
                     let tax = { Label=label; Amount=taxAmount }
-                    (tax, tail) |> Some
+                    struct (tax, tail) |> Some
                 | _ -> None
             else None) 
     |> Parser
 
+let vatSample = "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
+
+run (many (pVatAmount <|> pVatPercent)) vatSample
 
 let pNotIncluded = pWord "not included" |> map (fun _ -> VatNotIncluded) 
 let pIncluded =    pWord "included"     |> map (fun _ -> VatIncluded)
 let pPriceKind = pNotIncluded <|> pIncluded
-let vat = (vatPercent <|> vatAmount) 
-let vats = many vat
+
+run pIncluded "included"
+
+let pVat = (pVatPercent <|> pVatAmount) 
+
+let vats = many pVat
 let pPrice = pPriceKind <*> vats
 
+run (many pVatAmount) vatSample
 
 
 run vats vatSample
@@ -198,4 +191,5 @@ run vats vatSample
 
 run pPrice "Prices are per room. Not included: 5 % VAT, 7 % Municipality fee, AED 20.00 Tourism fee per night, 10 % Property service charge"
 run pPrice "Prices are per room. included: 5 % VAT"
+run pPrice vatSample
 
