@@ -17,6 +17,7 @@ let eheaders =
 
 open System.Reflection
 open System.Collections
+open System.Web
 
 let setHeaderRestriction name restricted = 
     let hInfoPi = typeof<WebHeaderCollection>.GetField("HInfo", BindingFlags.NonPublic ||| BindingFlags.Static)
@@ -37,7 +38,7 @@ let rq url headers =
         silentCookieErrors = true,
         customizeHttpRequest =
             fun x -> 
-                x.Proxy <- WebProxy("http://host.docker.internal:8888")
+                //x.Proxy <- WebProxy("http://host.docker.internal:8888")
                 setHeaderRestriction "Connection" false
                 setHeaderRestriction "User-Agent" false
                 setHeaderRestriction "Accept" false
@@ -49,5 +50,23 @@ let rq url headers =
                 setHeaderRestriction "Accept" true
                 setHeaderRestriction "Referer" true
                 x)
+#r "System.Net.Http"
+open System.Net
+open System.Net.Http
 
-rq "http://www.expedia.com" eheaders
+let rq2 url headers = 
+    async {
+        use clientHandler = new HttpClientHandler()
+        clientHandler.AutomaticDecompression <- System.Net.DecompressionMethods.Deflate ||| System.Net.DecompressionMethods.GZip
+        clientHandler.UseProxy <- true
+        clientHandler.Proxy <- WebProxy("http://host.docker.internal:8888")
+        use client = new HttpClient(clientHandler)
+        
+        headers |> List.iter (fun ((k:string),(v:string)) -> client.DefaultRequestHeaders.Add(k,v) |> ignore)
+        let! r = client.GetAsync(url:string) |> Async.AwaitTask
+        
+        return! r.Content.ReadAsStringAsync() |> Async.AwaitTask
+    }
+rq "https://www.expedia.com" eheaders
+
+rq2 "https://www.expedia.com" eheaders |> Async.RunSynchronously
